@@ -23,7 +23,8 @@ const pincode = conf.pincode || '031-45-154'
 cameraAccessory.publish({
   username: conf.username || 'EC:23:3D:D3:CE:CE',
   pincode: pincode,
-  category: hap.Accessory.Categories.CAMERA
+  category: hap.Accessory.Categories.CAMERA,
+  port: conf.port,
 }, true)
 
 console.log('Scan this code with your HomeKit App on your iOS device to pair with Camera:')

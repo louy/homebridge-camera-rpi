@@ -23,8 +23,8 @@ function Camera (hap, conf, log) {
     srtp: true, // Supports SRTP AES_CM_128_HMAC_SHA1_80 encryption
     video: {
       resolutions: [
-        // [1920, 1080, 30], // Width, Height, framerate
-        // [1280, 960, 30],
+        [1920, 1080, 30], // Width, Height, framerate
+        [1280, 960, 30],
         [1280, 720, 30],
         [1024, 768, 30],
         [640, 480, 30],
@@ -178,10 +178,20 @@ Camera.prototype.prepareStream = function (request, callback) {
 Camera.prototype.handleStreamRequest = function (request) {
   var sessionID = request['sessionID']
   var requestType = request['type']
-  if (!sessionID) return
+  if (!sessionID) { console.log("No session id!"); return }
   let sessionIdentifier = this.hap.uuid.unparse(sessionID)
 
-  if (requestType === 'start' && this.pendingSessions[sessionIdentifier]) {
+  switch (requestType) {
+  case 'reconfigure':
+    console.log(`Reconfigure stream request ${sessionIdentifier}`);
+    if (this.ongoingSessions[sessionIdentifier]) {
+    // TODO: Reconfigure shouldn't restart the stream
+    // this.ongoingSessions[sessionIdentifier].kill('SIGKILL')
+    }
+    break;
+  case 'start':
+    console.log(`Start stream request ${sessionIdentifier}`);
+    if (this.pendingSessions[sessionIdentifier]) {
     var width = 1280
     var height = 720
     var fps = 30
@@ -195,6 +205,8 @@ Camera.prototype.handleStreamRequest = function (request) {
     }
 
     this._v4l2CTLSetCTRL('video_bitrate', `${bitrate}000`)
+    this._v4l2CTLSetCTRL('video_bitrate_mode', `1`) // 0 for variable, 1 for constant
+    this._v4l2CTLSetCTRL('debug', this.debug?`1`:`0`) 
 
     let srtp = this.pendingSessions[sessionIdentifier]['video_srtp'].toString('base64')
     let address = this.pendingSessions[sessionIdentifier]['address']
@@ -202,9 +214,15 @@ Camera.prototype.handleStreamRequest = function (request) {
     let ssrc = this.pendingSessions[sessionIdentifier]['video_ssrc']
 
     this.log(`Starting video stream (${width}x${height}, ${fps} fps, ${bitrate} kbps)`)
+// -use_wallclock_as_timestamps 1 \
+// -copyts \
     let ffmpegCommand = `\
--f video4linux2 -input_format h264 -video_size ${width}x${height} -framerate ${fps} -timestamps abs -i /dev/video0 \
--vcodec copy -copyts -an -payload_type 99 -ssrc ${ssrc} -f rtp \
+-f video4linux2 -input_format h264 -video_size ${width}x${height} -framerate ${fps} \
+-timestamps abs \
+-fflags +genpts \
+-i /dev/video0 \
+-vcodec copy \
+-an -payload_type 99 -ssrc ${ssrc} -f rtp \
 -srtp_out_suite AES_CM_128_HMAC_SHA1_80 -srtp_out_params ${srtp} \
 srtp://${address}:${port}?rtcpport=${port}&localrtcpport=${port}&pkt_size=1378`
     if (this.debug) {
@@ -224,18 +242,25 @@ srtp://${address}:${port}?rtcpport=${port}&localrtcpport=${port}&pkt_size=1378`
     })
     ffmpeg.on('close', code => {
       if (!code || code === 255) {
-        this.log('Video stream stopped')
+        this.log('Video stream stopped, code: ' + code)
       } else {
         this.log(`ffmpeg exited with code ${code}`)
       }
     })
     this.ongoingSessions[sessionIdentifier] = ffmpeg
-
-    delete this.pendingSessions[sessionIdentifier]
-  }
-  if (requestType === 'stop' && this.ongoingSessions[sessionIdentifier]) {
+    }
+    break;
+  case 'stop':
+    console.log(`Stop stream request ${sessionIdentifier}`);
+    if (this.ongoingSessions[sessionIdentifier]) {
     this.ongoingSessions[sessionIdentifier].kill('SIGKILL')
     delete this.ongoingSessions[sessionIdentifier]
+    console.log("Sent kill request to ffmpeg")
+    } else {
+    console.log("Couldn't find ongoing session");
+    }
+    delete this.pendingSessions[sessionIdentifier]
+    break;
   }
 }
 
